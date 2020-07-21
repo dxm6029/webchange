@@ -12,6 +12,7 @@
             [spec-tools.data-spec :as ds]
             [schema.core :as s]
             [config.core :refer [env]]
+            [webchange.common.hmac-sha256 :as sign]
             [compojure.api.middleware :as mw]))
 
 (defn handle-save-scene
@@ -82,6 +83,13 @@
 (defn find-all-tags []
   (response (core/find-all-tags)))
 
+(s/defschema Error403 {:errors [{:message s/Str}]})
+
+(s/defschema CoursesOrError (s/either [Course] Error403))
+
+
+  {:errors [{:message "Api Unauthorized"}]}
+
 (def website-api-routes
   (api
   (swagger-routes {:ui   "/api-docs"
@@ -107,9 +115,10 @@
       (character-skins)
       )
     (GET "/available" []
-      :return [Course]
+      :return CoursesOrError
       :summary "Returns all available courses"
-      (-> (core/get-available-courses) response))
+      (-> (fn [request] (-> (core/get-available-courses) response))
+          sign/wrap-api-with-signature))
     (POST "/:course-id/translate" request
       :path-params [course-id :- s/Int]
       :return Course
@@ -120,7 +129,23 @@
       :path-params [website-user-id :- s/Int]
       :return [Course]
       :summary "Returns courses by website user id"
-      (-> (core/get-courses-by-website-user website-user-id) response)))))
+      (-> (fn [request] (-> (core/get-courses-by-website-user website-user-id) response))
+          sign/wrap-api-with-signature
+      )
+      ))))
+
+
+(def website-api-protected-routes
+  (api
+    (swagger-routes {:ui   "/api-docs"
+                     :data {:info     {:title       "TabSchools API"}
+                            :tags     [{:name "course", :description "Course APIs"}]}})
+    (context "/api/courses" []
+      :tags ["course"]
+      ;should go before general "/api/courses/:course-slug" to be accessible
+
+  )))
+
 
 
 

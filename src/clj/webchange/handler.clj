@@ -1,5 +1,5 @@
 (ns webchange.handler
-  (:require [compojure.core :refer [GET POST PUT DELETE defroutes routes]]
+  (:require [compojure.core :refer [ANY GET POST PUT DELETE defroutes routes]]
             [compojure.route :refer [resources files not-found]]
             [ring.util.response :refer [resource-response response redirect]]
             [ring.middleware.reload :refer [wrap-reload]]
@@ -21,10 +21,14 @@
             [buddy.auth.backends.session :refer [session-backend]]
             [buddy.auth.middleware :refer [wrap-authentication wrap-authorization authorization-error]]
             [clojure.edn :as edn]
+            [webchange.common.hmac-sha256 :as sign]
             [clojure.tools.logging :as log]
+            [clojure.data.json :as json]
+            [webchange.common.hmac-sha256 :as sign]
             [ring.middleware.session.memory :as mem]
             [webchange.common.handler :refer [handle current-user]]
-            [config.core :refer [env]]))
+            [config.core :refer [env]])
+  (:import (java.io ByteArrayInputStream)))
 
 (defn api-request? [request] (= "application/json" (:accept request)))
 
@@ -133,19 +137,6 @@
     response
     (assoc response :body (slurp body))))
 
-(defn wrap-key-protected
-  [handler]
-  (fn [{{api-key "api-key"} :headers :as request}]
-     (let [response (if (= api-key (:api-key env))
-                      (handler request)
-                      {:status 403
-                       :body {:errors [{:message "Unauthorized"}]}})
-           ] response)))
-
-;(try (handler request)
-;     (catch Exception e
-;       (authorization-error request e backend)))
-
 (defroutes app
            website-api-routes
            pages-routes
@@ -155,25 +146,31 @@
            class-routes
            school-routes
            secondary-school-routes
+           asset-maintainer-routes
            dataset-routes
            progress-routes
            resources-routes
            service-worker-route
            asset-routes
-           (-> asset-maintainer-routes
-               wrap-key-protected)
            (not-found "Not Found"))
 
 (def dev-store (mem/memory-store))
 
-(def handler (-> #'app
-                 (wrap-authorization auth-backend)
-                 (wrap-authentication auth-backend)
-                 (wrap-session {:store dev-store})
-                 wrap-body-as-string
-                 (muuntaja.middleware/wrap-params)
-                 (muuntaja.middleware/wrap-format)
-                 (muuntaja.middleware/wrap-exception)))
+
+(def handler
+  (-> (routes
+    (-> #'app
+        (wrap-authorization auth-backend)
+        (wrap-authentication auth-backend)
+        (wrap-session {:store dev-store})
+        wrap-body-as-string
+        (muuntaja.middleware/wrap-params)
+        (muuntaja.middleware/wrap-format)
+        (muuntaja.middleware/wrap-exception)
+        ))
+      sign/wrap-body-as-byte-array
+      )
+  )
 
 (def dev-handler (-> #'handler
                      wrap-reload
